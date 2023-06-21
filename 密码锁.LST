@@ -1,0 +1,1134 @@
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 1   
+
+
+C51 COMPILER V9.00, COMPILATION OF MODULE 胈_胨_
+OBJECT MODULE PLACED IN 密码锁.OBJ
+COMPILER INVOKED BY: D:\KEIL4\C51\BIN\C51.EXE 密码锁.c BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1             //包含头文件
+   2          #include <REG52.h>
+   3          #include<intrins.h>
+   4          //宏定义
+   5          #define LCM_Data  P0              //将P0口定义为LCM_Data
+   6          #define uchar unsigned char 
+   7          #define uint  unsigned int
+   8          #define w 6                             //定义密码位数
+   9          //1602的控制脚
+  10          
+  11          sbit lcd1602_rs=P2^5;
+  12          sbit lcd1602_rw=P2^6;
+  13          sbit lcd1602_en=P2^7;
+  14          
+  15          sbit Scl=P3^4;                  //24C02串行时钟
+  16          sbit Sda=P3^5;                  //24C02串行数据
+  17          
+  18          sbit ALAM = P2^1;               //报警  
+  19          sbit KEY = P3^6;                //开锁
+  20           
+  21          
+  22          bit  operation=0;               //操作标志位
+  23          bit  pass=0;                    //密码正确标志
+  24          bit  ReInputEn=0;               //重置输入允许标志      
+  25          bit  s3_keydown=0;              //3秒按键标志位
+  26          bit  key_disable=0;             //锁定键盘标志
+  27          bit  flag_REC =0;       //串口接受标志位
+  28          unsigned char buff[5]=0;
+  29          unsigned char countt0,second;   //t0中断计数器,秒计数器
+  30          
+  31          void Delay5Ms(void);            //声明延时函数
+  32          
+  33          unsigned char code a[]={0xFE,0xFD,0xFB,0xF7};                           //控盘扫描控制表
+  34          //液晶显示数据数组
+  35          unsigned char code start_line[] = {"password:       "};
+  36          unsigned char code name[]               = { "===Coded Lock==="};        //显示名称
+  37          unsigned char code Correct[]    = {"     correct    "};         //输入正确
+  38          unsigned char code Error[]      = {"      error     "};         //输入错误
+  39          unsigned char code codepass[]   = {"      pass      "}; 
+  40          unsigned char code LockOpen[]   = {"      open      "};         //OPEN
+  41          unsigned char code SetNew[]     = {"SetNewWordEnable"};
+  42          unsigned char code Input[]      = {"input:          "};         //INPUT
+  43          unsigned char code ResetOK[]    = {"ResetPasswordOK "};
+  44          unsigned char code initword[]   = {"Init password..."};
+  45          unsigned char code Er_try[]             = {"error,try again!"};
+  46          unsigned char code again[]              = {"input again     "};
+  47          
+  48          unsigned char InputData[16];                                                                    //输入密码暂存区
+  49          unsigned char CurrentPassword[16]={1,3,1,4,2,0};                        //管理员密码（只可在程序中修改）
+  50          unsigned char TempPassword[16];
+  51          unsigned char N=0,M=0,flag=0;                           //密码输入位数记数
+  52          unsigned char ErrorCont;                        //错误次数计数
+  53          unsigned char CorrectCont;                      //正确输入计数
+  54          unsigned char ReInputCont;                      //重新输入计数
+  55          unsigned char code initpassword[16]={0,0,0,0,0,0};                      //输入管理员密码后将密码初始为000000
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 2   
+
+  56          unsigned char  MM[2]={0,0};
+  57          
+  58          //=====================5ms延时==============================
+  59          void Delay5Ms(void)
+  60          {
+  61   1              unsigned int TempCyc = 5552;
+  62   1              while(TempCyc--);
+  63   1      }
+  64          
+  65          //===================400ms延时==============================
+  66          void Delay400Ms(void)
+  67          {
+  68   1       unsigned char TempCycA = 5;
+  69   1       unsigned int TempCycB;
+  70   1       while(TempCycA--)
+  71   1       {
+  72   2        TempCycB=7269;
+  73   2        while(TempCycB--);
+  74   2       }
+  75   1      }
+  76          
+  77          //=============================================================================================
+  78          //================================24C02========================================================
+  79          //=============================================================================================
+  80          
+  81          void mDelay(uint t) //延时
+  82          { 
+  83   1              uchar i;
+  84   1              while(t--)
+  85   1              {
+  86   2                      for(i=0;i<125;i++)
+  87   2                      {;}
+  88   2              }
+  89   1      }
+  90             
+  91          
+  92          void Nop(void)            //空操作
+  93          {
+  94   1              _nop_();                  //仅作延时用一条语句大约1us
+  95   1              _nop_();
+  96   1              _nop_();
+  97   1              _nop_();
+  98   1      }
+  99          
+ 100          /*****24c02程序参照24c02时序图*****/
+ 101          /*起始条件*/
+ 102          
+ 103          void Start(void)
+ 104          {
+ 105   1              Sda=1;
+ 106   1              Scl=1;
+ 107   1              Nop();
+ 108   1              Sda=0;
+ 109   1              Nop();
+ 110   1      }
+ 111          
+ 112          
+ 113           /*停止条件*/
+ 114          void Stop(void)
+ 115          {
+ 116   1              Sda=0;
+ 117   1              Scl=1;
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 3   
+
+ 118   1              Nop();
+ 119   1              Sda=1;
+ 120   1              Nop();
+ 121   1      }
+ 122          
+ 123          /*应答位*/
+ 124          void Ack(void)
+ 125          {
+ 126   1              Sda=0;
+ 127   1              Nop();
+ 128   1              Scl=1;
+ 129   1              Nop();
+ 130   1              Scl=0;
+ 131   1      }
+ 132          
+ 133          /*反向应答位*/
+ 134          void NoAck(void)
+ 135          {
+ 136   1              Sda=1;
+ 137   1              Nop();
+ 138   1              Scl=1;
+ 139   1              Nop();
+ 140   1              Scl=0;
+ 141   1      }
+ 142          
+ 143           /*发送数据子程序，Data为要求发送的数据*/
+ 144          void Send(uchar Data)
+ 145          {
+ 146   1              uchar BitCounter=8;
+ 147   1              uchar temp;
+ 148   1              do
+ 149   1              {
+ 150   2                      temp=Data;                                         //将待发送数据暂存temp
+ 151   2                      Scl=0;
+ 152   2                      Nop();
+ 153   2                      if((temp&0x80)==0x80)              //将读到的数据&0x80
+ 154   2                      Sda=1;
+ 155   2                      else 
+ 156   2                      Sda=0;
+ 157   2                      Scl=1;
+ 158   2                      temp=Data<<1;                              //数据左移
+ 159   2                      Data=temp;                                         //数据左移后重新赋值Data
+ 160   2                      BitCounter--;                              //该变量减到0时，数据也就传送完成了
+ 161   2              }
+ 162   1              while(BitCounter);                                 //判断是否传送完成
+ 163   1              Scl=0;
+ 164   1      }
+ 165          
+ 166          /*读一字节的数据，并返回该字节值*/
+ 167          uchar Read(void)
+ 168          {
+ 169   1          uchar temp=0;
+ 170   1              uchar temp1=0;
+ 171   1              uchar BitCounter=8;
+ 172   1              Sda=1;
+ 173   1              do
+ 174   1              {
+ 175   2                      Scl=0;
+ 176   2                      Nop();
+ 177   2                      Scl=1;
+ 178   2                      Nop();
+ 179   2                      if(Sda)                            //数据位是否为1
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 4   
+
+ 180   2                              temp=temp|0x01;    //为1 temp的最低位为1（|0x01，就是将最低位变为1）
+ 181   2                      else                               //如果为0
+ 182   2                              temp=temp&0xfe;    //temp最低位为0（&0xfe（11111110）最低位就是0）
+ 183   2                      if(BitCounter-1)           //BitCounter减1后是否为真
+ 184   2                      {
+ 185   3                              temp1=temp<<1;     //temp左移
+ 186   3                              temp=temp1;
+ 187   3                      }
+ 188   2                      BitCounter--;              //BitCounter减到0时，数据就接收完了
+ 189   2              }
+ 190   1              while(BitCounter);                 //判断是否接收完成
+ 191   1              return(temp);
+ 192   1      }
+ 193          
+ 194          void WrToROM(uchar Data[],uchar Address,uchar Num)
+ 195          {
+ 196   1        uchar i;
+ 197   1        uchar *PData;
+ 198   1        PData=Data;
+ 199   1        for(i=0;i<Num;i++)
+ 200   1        {
+ 201   2        Start();
+ 202   2        Send(0xa0);
+ 203   2        Ack();
+ 204   2        Send(Address+i);
+ 205   2        Ack();
+ 206   2        Send(*(PData+i));
+ 207   2        Ack();
+ 208   2        Stop();
+ 209   2        mDelay(20);
+ 210   2        }
+ 211   1      }
+ 212          
+ 213          void RdFromROM(uchar Data[],uchar Address,uchar Num)
+ 214          {
+ 215   1        uchar i;
+ 216   1        uchar *PData;
+ 217   1        PData=Data;
+ 218   1        for(i=0;i<Num;i++)
+ 219   1        {
+ 220   2        Start();
+ 221   2        Send(0xa0);
+ 222   2        Ack();
+ 223   2        Send(Address+i);
+ 224   2        Ack();
+ 225   2        Start();
+ 226   2        Send(0xa1);
+ 227   2        Ack();
+ 228   2        *(PData+i)=Read();
+ 229   2        Scl=0;
+ 230   2        NoAck();
+ 231   2        Stop();
+ 232   2        }
+ 233   1      }
+ 234          
+ 235          
+ 236          //==================================================================================================
+ 237          //=======================================LCD1602====================================================
+ 238          //==================================================================================================
+ 239          
+ 240          #define yi 0x80 //LCD第一行的初始位置,因为LCD1602字符地址首位D7恒定为1（100000000=80）
+ 241          #define er 0x80+0x40 //LCD第二行初始位置（因为第二行第一个字符位置地址是0x40）
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 5   
+
+ 242          
+ 243          
+ 244          //----------------延时函数，后面经常调用----------------------
+ 245          void delay(uint xms)//延时函数，有参函数
+ 246          {
+ 247   1              uint x,y;
+ 248   1              for(x=xms;x>0;x--)
+ 249   1               for(y=110;y>0;y--);
+ 250   1      }
+ 251          
+ 252          //--------------------------写指令---------------------------
+ 253          void write_1602com(uchar com)//****液晶写入指令函数****
+ 254          {
+ 255   1              lcd1602_rs=0;//数据/指令选择置为指令
+ 256   1              lcd1602_rw=0; //读写选择置为写
+ 257   1              P0=com;//送入数据
+ 258   1              delay(1);
+ 259   1              lcd1602_en=1;//拉高使能端，为制造有效的下降沿做准备
+ 260   1              delay(1);
+ 261   1              lcd1602_en=0;//en由高变低，产生下降沿，液晶执行命令
+ 262   1      }
+ 263          
+ 264          //-------------------------写数据-----------------------------
+ 265          void write_1602dat(uchar dat)//***液晶写入数据函数****
+ 266          {
+ 267   1              lcd1602_rs=1;//数据/指令选择置为数据
+ 268   1              lcd1602_rw=0; //读写选择置为写
+ 269   1              P0=dat;//送入数据
+ 270   1              delay(1);
+ 271   1              lcd1602_en=1; //en置高电平，为制造下降沿做准备
+ 272   1              delay(1);
+ 273   1              lcd1602_en=0; //en由高变低，产生下降沿，液晶执行命令
+ 274   1      }
+ 275          
+ 276          //-------------------------初始化-------------------------
+ 277          void lcd_init(void)
+ 278          {
+ 279   1              write_1602com(0x38);//设置液晶工作模式，意思：16*2行显示，5*7点阵，8位数据
+ 280   1              write_1602com(0x0c);//开显示不显示光标
+ 281   1              write_1602com(0x06);//整屏不移动，光标自动右移
+ 282   1              write_1602com(0x01);//清显示
+ 283   1      }
+ 284          //========================================================================================
+ 285          //=========================================================================================
+ 286          
+ 287          
+ 288          
+ 289          
+ 290          //==============将按键值编码为数值=========================
+ 291          unsigned char coding(unsigned char m)    
+ 292          {
+ 293   1              unsigned char k;
+ 294   1              
+ 295   1              switch(m)
+ 296   1              {
+ 297   2                      case (0x11): k=1;break;
+ 298   2                      case (0x21): k=2;break;
+ 299   2                      case (0x41): k=3;break;
+ 300   2                      case (0x81): k='A';break;
+ 301   2                      case (0x12): k=4;break;
+ 302   2                      case (0x22): k=5;break;
+ 303   2                      case (0x42): k=6;break;
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 6   
+
+ 304   2                      case (0x82): k='B';break;
+ 305   2                      case (0x14): k=7;break;
+ 306   2                      case (0x24): k=8;break;
+ 307   2                      case (0x44): k=9;break;
+ 308   2                      case (0x84): k='C';break;
+ 309   2                      case (0x18): k='*';break;
+ 310   2                      case (0x28): k=0;break;
+ 311   2                      case (0x48): k='#';break;
+ 312   2                      case (0x88): k='D';break;
+ 313   2              }
+ 314   1              return(k);
+ 315   1      }
+ 316          
+ 317          
+ 318          //=====================按键检测并返回按键值===============================
+ 319          unsigned char keynum(void)
+ 320          {
+ 321   1              unsigned char row,col,i;
+ 322   1      
+ 323   1               if(flag_REC==1)                                    //
+ 324   1               {
+ 325   2                      flag_REC=0;
+ 326   2                      if(buff[0]=='O'&&buff[1]=='N')  //第一个字节为O，第二个字节为N，第三个字节为控制码
+ 327   2                      switch(buff[2])
+ 328   2                      {
+ 329   3                               
+ 330   3                            case '1' :                                                 
+ 331   3                                return(0x11);
+ 332   3                                break;
+ 333   3                            case '2':                                  
+ 334   3                                return(0x21);
+ 335   3                                break;                                   
+ 336   3                            case '3':                                  
+ 337   3                                return(0x41);
+ 338   3                                break;
+ 339   3                            case '4':                          
+ 340   3                                return(0x12);
+ 341   3                                break;
+ 342   3                                case '5':                              
+ 343   3                                return(0x22);
+ 344   3                                break;
+ 345   3                                case '6':                              
+ 346   3                                return(0x42);
+ 347   3                                break;
+ 348   3                                case '7':                              
+ 349   3                                return(0x14);
+ 350   3                                break;
+ 351   3                                case '8':                              
+ 352   3                                return(0x24);
+ 353   3                                break;
+ 354   3                                case '9':                              
+ 355   3                                return(0x44);
+ 356   3                                break;
+ 357   3                                case 'A':             //对应C键                
+ 358   3                                return(0x84);
+ 359   3                                break;
+ 360   3                                case 'B':             //对应*键                
+ 361   3                                return(0x18);
+ 362   3                                break;
+ 363   3                                case 'C':             //对应#键                
+ 364   3                                return(0x48);
+ 365   3                                break;
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 7   
+
+ 366   3                                case 'D':             //对应D键                
+ 367   3                                return(0x88);
+ 368   3                                break;
+ 369   3                                 case 'E':            //对应0键                
+ 370   3                                return(0x28);
+ 371   3                                break;
+ 372   3              
+ 373   3                        }                                      
+ 374   2                }  
+ 375   1                      P1=0xf0;
+ 376   1              if((P1&0xf0)!=0xf0)
+ 377   1              {
+ 378   2                      Delay5Ms();
+ 379   2              Delay5Ms();
+ 380   2                      if((P1&0xf0)!=0xf0)
+ 381   2                      {
+ 382   3                      row=P1^0xf0;          //确定行线
+ 383   3                              i=0;
+ 384   3                              P1=a[i];                  //精确定位
+ 385   3                              while(i<4)
+ 386   3                              {
+ 387   4                                      if((P1&0xf0)!=0xf0)
+ 388   4                                      {
+ 389   5                                              col=~(P1&0xff);   //确定列线
+ 390   5                                              break;            //已定位后提前退出   
+ 391   5                                      }
+ 392   4                                      else 
+ 393   4                                      {
+ 394   5                                              i++;
+ 395   5                                              P1=a[i];
+ 396   5                                      }
+ 397   4                              }
+ 398   3                      }
+ 399   2                      else 
+ 400   2                      {
+ 401   3                              return 0;
+ 402   3                      }
+ 403   2              
+ 404   2                      while((P1&0xf0)!=0xf0);
+ 405   2      
+ 406   2                      return (row|col);                       //行线与列线组合后返回
+ 407   2              }
+ 408   1              else return 0;                          //无键按下时返回0
+ 409   1      
+ 410   1      }
+ 411          
+ 412          
+ 413          
+ 414          
+ 415          //=======================一声提示音，表示有效输入========================
+ 416          void OneAlam(void)
+ 417          {
+ 418   1              ALAM=0;
+ 419   1              Delay5Ms();
+ 420   1          ALAM=1;
+ 421   1      }
+ 422          
+ 423          //========================二声提示音，表示操作成功========================
+ 424          void TwoAlam(void)
+ 425          {
+ 426   1              ALAM=0;
+ 427   1              Delay5Ms();
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 8   
+
+ 428   1          ALAM=1;
+ 429   1          Delay5Ms();
+ 430   1              ALAM=0;
+ 431   1              Delay5Ms();
+ 432   1          ALAM=1;
+ 433   1      }
+ 434          
+ 435          //========================三声提示音,表示错误========================
+ 436          void ThreeAlam(void)
+ 437          {
+ 438   1              ALAM=0;
+ 439   1              Delay5Ms();
+ 440   1          ALAM=1;
+ 441   1          Delay5Ms();
+ 442   1              ALAM=0;
+ 443   1              Delay5Ms();
+ 444   1          ALAM=1;
+ 445   1          Delay5Ms();
+ 446   1              ALAM=0;
+ 447   1              Delay5Ms();
+ 448   1          ALAM=1;
+ 449   1      
+ 450   1      }
+ 451          
+ 452          //=====================显示输入的N个数字，用H代替以便隐藏============================
+ 453          
+ 454          
+ 455          //=======================显示提示输入=========================
+ 456          void DisplayChar(void)
+ 457          {
+ 458   1              unsigned char i;
+ 459   1              if(pass==1)
+ 460   1              {
+ 461   2                      //DisplayListChar(0,1,LockOpen);
+ 462   2                      write_1602com(er);                                 //在二行开始显示
+ 463   2                      for(i=0;i<16;i++)
+ 464   2                      {
+ 465   3                              write_1602dat(LockOpen[i]);        //显示open 开锁成功
+ 466   3                      }
+ 467   2              }
+ 468   1              else
+ 469   1              {
+ 470   2                      if(N==0)
+ 471   2                      {
+ 472   3                              //DisplayListChar(0,1,Error);
+ 473   3                              write_1602com(er);
+ 474   3                              for(i=0;i<16;i++)
+ 475   3                              {
+ 476   4                                      write_1602dat(Error[i]);        //显示错误
+ 477   4                              }
+ 478   3                      }
+ 479   2                      else
+ 480   2                      {
+ 481   3                              //DisplayListChar(0,1,start_line);      
+ 482   3                              write_1602com(er);
+ 483   3                              for(i=0;i<16;i++)
+ 484   3                              {
+ 485   4                                      write_1602dat(start_line[i]);//显示开始输入     
+ 486   4                              }
+ 487   3                      }
+ 488   2              }
+ 489   1      }
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 9   
+
+ 490          
+ 491          
+ 492          
+ 493          //========================重置密码==================================================
+ 494          //==================================================================================
+ 495          void ResetPassword(void)
+ 496          {
+ 497   1              unsigned char i;        
+ 498   1              unsigned char j;
+ 499   1              write_1602com(yi);//日历显示固定符号从第一行第0个位置之后开始显示
+ 500   1              for(i=0;i<16;i++)
+ 501   1              {
+ 502   2                      write_1602dat(name[i]);//向液晶屏写开机画面
+ 503   2              }
+ 504   1              if(pass==0)
+ 505   1              {
+ 506   2                      pass=0;                    
+ 507   2                      DisplayChar();     //显示错误
+ 508   2                      ThreeAlam();       //没开锁时按下重置密码报警3声
+ 509   2              }
+ 510   1              else                               //开锁状态下才能进行密码重置程序
+ 511   1              {
+ 512   2              if(ReInputEn==1)   //开锁状态下，ReInputEn置1，重置密码允许
+ 513   2                      {
+ 514   3                              if(N==M)           //输入6位密码
+ 515   3                              {
+ 516   4                                      ReInputCont++;                  //密码次数计数  
+ 517   4                                      if(ReInputCont==2)              //输入两次密码
+ 518   4                                      {
+ 519   5                                              for(i=0;i<M;)
+ 520   5                                              {
+ 521   6                                                      if(TempPassword[i]==InputData[i])       //将两次输入的新密码作对比
+ 522   6                                                              i++;
+ 523   6                                                      else                                                            //如果两次的密码不同
+ 524   6                                                      {
+ 525   7                                                              //DisplayListChar(0,1,Error);
+ 526   7                                                              write_1602com(er);
+ 527   7                                                              for(j=0;j<16;j++)
+ 528   7                                                              {
+ 529   8                                                                      write_1602dat(Error[j]);        //显示错误Error
+ 530   8                                                              }
+ 531   7                                                              ThreeAlam();                    //错误提示      
+ 532   7                                                              pass=0;                                 //关锁
+ 533   7                                                              ReInputEn=0;                    //关闭重置功能，
+ 534   7                                                              ReInputCont=0;
+ 535   7                                                              DisplayChar();
+ 536   7                                                              break;
+ 537   7                                                      }
+ 538   6                                              } 
+ 539   5                                              if(i==M)
+ 540   5                                              {
+ 541   6                                                      //DisplayListChar(0,1,ResetOK);
+ 542   6                                                      write_1602com(er);
+ 543   6                                                      for(j=0;j<16;j++)
+ 544   6                                                      {
+ 545   7                                                              write_1602dat(ResetOK[j]);        //密码修改成功，显示
+ 546   7                                                      }
+ 547   6      
+ 548   6                                                      TwoAlam();                              //操作成功提示
+ 549   6                                                      MM[0]=M;
+ 550   6                                                      WrToROM('0',0,16);              //清除原密码区密码，用字符0代替
+ 551   6                                                      WrToROM(TempPassword,0,M);              //将新密码写入24C02存储
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 10  
+
+ 552   6                                                      WrToROM(MM,17,1);
+ 553   6                                                      ReInputEn=0;
+ 554   6                                              }
+ 555   5                                              ReInputCont=0;
+ 556   5                                              CorrectCont=0;
+ 557   5                                      }
+ 558   4                                      else                                      //输入一次密码时
+ 559   4                                      {
+ 560   5                                              OneAlam();
+ 561   5                                              //DisplayListChar(0, 1, again);                 //显示再次输入一次
+ 562   5                                              write_1602com(er);
+ 563   5                                              for(j=0;j<16;j++)
+ 564   5                                              {
+ 565   6                                                      write_1602dat(again[j]);                        //显示再输入一次
+ 566   6                                              }                                       
+ 567   5                                              for(i=0;i<M;i++)
+ 568   5                                              {
+ 569   6                                                      TempPassword[i]=InputData[i];           //将第一次输入的数据暂存起来                                            
+ 570   6                                              }
+ 571   5                                      }
+ 572   4      
+ 573   4                              N=0;                                            //输入数据位数计数器清零
+ 574   4                         }
+ 575   3                  }
+ 576   2              }
+ 577   1      
+ 578   1      }
+ 579          
+ 580          
+ 581          
+ 582          //=======================输入密码错误超过三过，报警并锁死键盘======================
+ 583          void Alam_KeyUnable(void)
+ 584          {
+ 585   1              P1=0x00;
+ 586   1              {
+ 587   2                      ALAM=~ALAM;                              //蜂鸣器一直闪烁鸣响
+ 588   2                      Delay5Ms();
+ 589   2              }
+ 590   1      }
+ 591          
+ 592          
+ 593          //=======================取消所有操作============================================
+ 594          void Cancel(void)
+ 595          {       
+ 596   1              unsigned char i;
+ 597   1              unsigned char j;
+ 598   1              //DisplayListChar(0, 1, start_line); 
+ 599   1              write_1602com(yi);//日历显示固定符号从第一行第0个位置之后开始显示
+ 600   1              for(i=0;i<16;i++)
+ 601   1              {
+ 602   2                      write_1602dat(name[i]);//向液晶屏写开机画面
+ 603   2              }
+ 604   1              write_1602com(er);
+ 605   1              for(j=0;j<16;j++)
+ 606   1              {
+ 607   2                      write_1602dat(start_line[j]);     //显示开机输入密码界面
+ 608   2              }
+ 609   1              TwoAlam();                              //提示音
+ 610   1              for(i=0;i<6;i++)
+ 611   1              {
+ 612   2                      InputData[i]=0;         //将输入密码清零
+ 613   2              }
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 11  
+
+ 614   1              KEY=1;                                  //关闭锁
+ 615   1              ALAM=1;                                 //报警关
+ 616   1              operation=0;                    //操作标志位清零
+ 617   1              pass=0;                                 //密码正确标志清零
+ 618   1              ReInputEn=0;                    //重置输入充许标志清零
+ 619   1              ErrorCont=0;                    //密码错误输入次数清零
+ 620   1              CorrectCont=0;                  //密码正确输入次数清零
+ 621   1              ReInputCont=0;                  //重置密码输入次数清零 
+ 622   1       
+ 623   1              s3_keydown=0;
+ 624   1              key_disable=0;                  //锁定键盘标志清零
+ 625   1              N=0;                                    //输入位数计数器清零
+ 626   1      }
+ 627          
+ 628          
+ 629          //==========================确认键，并通过相应标志位执行相应功能===============================
+ 630          void Ensure(void)
+ 631          {       
+ 632   1              unsigned char i,j,k;
+ 633   1              write_1602com(yi);//日历显示固定符号从第一行第0个位置之后开始显示
+ 634   1              for(i=0;i<16;i++)
+ 635   1              {
+ 636   2                      write_1602dat(name[i]);//向液晶屏写开机画面
+ 637   2              }
+ 638   1              RdFromROM(MM,17,1);
+ 639   1              M=MM[0];
+ 640   1              if(M==0)
+ 641   1              M=6;
+ 642   1              RdFromROM(CurrentPassword,0,M);                                         //从24C02里读出存储密码
+ 643   1              if(N==6)
+ 644   1              {
+ 645   2                      if((InputData[0]==1)&&(InputData[1]==3)&&(InputData[2]==1)&&(InputData[3]==4)&&(InputData[4]==2)&&(Input
+             -Data[5]==0))
+ 646   2                      {
+ 647   3                              flag=1;
+ 648   3                              MM[0]=6;
+ 649   3                              WrToROM(MM,17,1); 
+ 650   3                              WrToROM(initpassword,0,6);                              //强制将初始密码写入24C02存储
+ 651   3                              //DisplayListChar(0,1,initword);                        //显示初始化密码
+ 652   3                              write_1602com(er);
+ 653   3                              for(j=0;j<16;j++)
+ 654   3                              {
+ 655   4                                      write_1602dat(initword[j]);                             //显示初始化密码
+ 656   4                              }
+ 657   3                              TwoAlam();                                                                      //成功提示音
+ 658   3                              Delay400Ms();                                                           //延时400ms
+ 659   3                              TwoAlam();                                                                      //成功提示音
+ 660   3                              N=0;                                                                            //输入位数计数器清零
+ 661   3                      }
+ 662   2                      else
+ 663   2                      flag=0;
+ 664   2              }
+ 665   1              if(N>M&&flag!=1)
+ 666   1              {
+ 667   2                      for(i=0;i<N;i++)
+ 668   2                      {
+ 669   3                              for(j=0;j<M;j++)
+ 670   3                              {
+ 671   4                                      if(InputData[i+j]==CurrentPassword[j])
+ 672   4                                      k=1;
+ 673   4                                      else
+ 674   4                                      k=0;
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 12  
+
+ 675   4                                      if(k==0)
+ 676   4                                      break;  
+ 677   4                              }
+ 678   3                              if(k==1)
+ 679   3                              break;
+ 680   3                      }
+ 681   2                      if(k==1)
+ 682   2                      {        
+ 683   3                              CorrectCont++;                                  //输入正确变量++
+ 684   3                              if(CorrectCont==1)                              //正确输入计数，当只有一次正确输入时，开锁
+ 685   3                              {
+ 686   4                                      //DisplayListChar(0,1,LockOpen);
+ 687   4                                      write_1602com(er);
+ 688   4                                      for(j=0;j<16;j++)
+ 689   4                                      {
+ 690   5                                              write_1602dat(LockOpen[j]);               //显示open开锁画面
+ 691   5                                      }
+ 692   4                                      TwoAlam();                      //操作成功提示音
+ 693   4                                      KEY=0;                                                                                  //开锁
+ 694   4                                      pass=1;                                                                                 //置正确标志位
+ 695   4                                      TR0=1;                                                                                  //开启定时
+ 696   4                                      for(j=0;j<16;j++)                                                               //将输入清除
+ 697   4                                      {
+ 698   5                                              InputData[j]=j;                                                         //开锁后将输入位清零
+ 699   5                                      }
+ 700   4                              }       
+ 701   3                              else                                                                                            //当两次正确输入时，开启重置密码功能
+ 702   3                              {
+ 703   4                                      //DisplayListChar(0,1,SetNew);
+ 704   4                                      write_1602com(er);
+ 705   4                                      for(j=0;j<16;j++)
+ 706   4                                      {
+ 707   5                                              write_1602dat(SetNew[j]);                                       //显示重置密码界面
+ 708   5                                      }
+ 709   4                                      TwoAlam();                                                                          //操作成功提示
+ 710   4                                      ReInputEn=1;                                                                    //允许重置密码输入
+ 711   4                                      CorrectCont=0;                                                                  //正确计数器清零
+ 712   4                              }       
+ 713   3                      }
+ 714   2                      if(k==0)                                                                                
+ 715   2                      {
+ 716   3                              ErrorCont++;                                            //错误次数++
+ 717   3                              write_1602com(er);
+ 718   3                              for(i=0;i<16;i++)
+ 719   3                              {
+ 720   4                                      write_1602dat(Error[i]);        
+ 721   4                              }
+ 722   3                              if(ErrorCont==3)                        //错误输入计数达三次时，报警并锁定键盘
+ 723   3                              {
+ 724   4                                      write_1602com(er);
+ 725   4                                      for(i=0;i<16;i++)
+ 726   4                                      {
+ 727   5                                              write_1602dat(Error[i]);        
+ 728   5                                      }
+ 729   4                                      do
+ 730   4                                      Alam_KeyUnable();
+ 731   4                                      while(1);
+ 732   4                              }
+ 733   3                              else                                     //错误次数小于3次时，锁死键盘3秒，然后重新可以输入
+ 734   3                              {
+ 735   4                                      TR0=1;                          //开启定时
+ 736   4                                      key_disable=1;                  //锁定键盘
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 13  
+
+ 737   4                                      pass=0;                                 //pass位清零
+ 738   4                              }
+ 739   3                      }
+ 740   2                      k=0;N=0;
+ 741   2              }       
+ 742   1              if(N==M&&N!=0)
+ 743   1              {
+ 744   2                      if(ReInputEn==0)                                                        //重置密码功能未开启
+ 745   2                      {
+ 746   3                              for(i=0;i<M;)
+ 747   3                              {                                       
+ 748   4                                      if(CurrentPassword[i]==InputData[i])    //判断输入密码和24c02中的密码是否相同
+ 749   4                                      {
+ 750   5                                              i++;                                                            //相同一位 i就+1
+ 751   5                                      }
+ 752   4                                      else                                                                    //如果有密码不同
+ 753   4                                      {                                                                               
+ 754   5                                              ErrorCont++;                                            //错误次数++
+ 755   5                                              if(ErrorCont==3)                        //错误输入计数达三次时，报警并锁定键盘
+ 756   5                                              {
+ 757   6                                                      write_1602com(er);
+ 758   6                                                      for(i=0;i<16;i++)
+ 759   6                                                      {
+ 760   7                                                              write_1602dat(Error[i]);        
+ 761   7                                                      }
+ 762   6                                                      do
+ 763   6                                                      Alam_KeyUnable();
+ 764   6                                                      while(1);
+ 765   6                                              }
+ 766   5                                              else                                     //错误次数小于3次时，锁死键盘3秒，然后重新可以输入
+ 767   5                                              {
+ 768   6                                                      write_1602com(er);
+ 769   6                                                      for(i=0;i<16;i++)
+ 770   6                                                      {
+ 771   7                                                              write_1602dat(Error[i]);        
+ 772   7                                                      }
+ 773   6                                                      TR0=1;                          //开启定时
+ 774   6                                                      key_disable=1;                  //锁定键盘
+ 775   6                                                      pass=0;                                 //pass位清零
+ 776   6                                                      break;                                  //跳出
+ 777   6                                              }
+ 778   5                                      }
+ 779   4                              }
+ 780   3                              
+ 781   3                              if(i==M)                                         //密码输入对时
+ 782   3                              {
+ 783   4                                      CorrectCont++;                                  //输入正确变量++
+ 784   4                                      if(CorrectCont==1)                              //正确输入计数，当只有一次正确输入时，开锁
+ 785   4                                      {
+ 786   5                                              //DisplayListChar(0,1,LockOpen);
+ 787   5                                              write_1602com(er);
+ 788   5                                              for(j=0;j<16;j++)
+ 789   5                                              {
+ 790   6                                                      write_1602dat(LockOpen[j]);               //显示open开锁画面
+ 791   6                                              }
+ 792   5                                              TwoAlam();                      //操作成功提示音
+ 793   5                                              KEY=0;                                                                                  //开锁
+ 794   5                                              pass=1;                                                                                 //置正确标志位
+ 795   5                                              TR0=1;                                                                                  //开启定时
+ 796   5                                              
+ 797   5                                              for(j=0;j<M;j++)                                                                //将输入清除
+ 798   5                                              {
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 14  
+
+ 799   6                                                      InputData[i]=0;                                                         //开锁后将输入位清零
+ 800   6                                              }
+ 801   5                                      }       
+ 802   4                                      else                                                                                            //当两次正确输入时，开启重置密码功能
+ 803   4                                      {
+ 804   5                                              //DisplayListChar(0,1,SetNew);
+ 805   5                                              write_1602com(er);
+ 806   5                                              for(j=0;j<16;j++)
+ 807   5                                              {
+ 808   6                                                      write_1602dat(SetNew[j]);                                       //显示重置密码界面
+ 809   6                                              }
+ 810   5                                              TwoAlam();                                                                          //操作成功提示
+ 811   5                                              ReInputEn=1;                                                                    //允许重置密码输入
+ 812   5                                              CorrectCont=0;                                                                  //正确计数器清零
+ 813   5                                      }
+ 814   4                              }
+ 815   3                              else                    //=========================当第一次使用或忘记密码时可以用131420对其密码初始化============
+ 816   3                              {
+ 817   4                              
+ 818   4                              }
+ 819   3                      }
+ 820   2                      else                                                                                    //当已经开启重置密码功能时，而按下开锁键，
+ 821   2                      {
+ 822   3                              //DisplayListChar(0,1,Er_try);
+ 823   3                              write_1602com(er);
+ 824   3                              for(j=0;j<16;j++)
+ 825   3                              {
+ 826   4                                      write_1602dat(Er_try[j]);                         //错误，请重新输入
+ 827   4                              }
+ 828   3                              ThreeAlam();                                                      //错误提示音
+ 829   3                      }
+ 830   2              }
+ 831   1              
+ 832   1              if(N<M&&flag!=1&&N!=0)
+ 833   1              {
+ 834   2              //DisplayListChar(0,1,Error);
+ 835   2              write_1602com(er);
+ 836   2              for(j=0;j<16;j++)
+ 837   2              {
+ 838   3              write_1602dat(Error[j]);                 //显示错误
+ 839   3              }
+ 840   2              
+ 841   2              TR0=1;                          //开启定时
+ 842   2              key_disable=1;                  //锁定键盘
+ 843   2              pass=0;                                 //pass位清零
+ 844   2              //              break;                                  //跳出
+ 845   2              ErrorCont++;                                            //错误次数++
+ 846   2              write_1602com(er);
+ 847   2              for(i=0;i<16;i++)
+ 848   2              {
+ 849   3              write_1602dat(Error[i]);        
+ 850   3              }
+ 851   2              if(ErrorCont==3)                        //错误输入计数达三次时，报警并锁定键盘
+ 852   2              {
+ 853   3              write_1602com(er);
+ 854   3              for(i=0;i<16;i++)
+ 855   3              {
+ 856   4              write_1602dat(Error[i]);        
+ 857   4              }
+ 858   3              do
+ 859   3              Alam_KeyUnable();
+ 860   3              while(1);
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 15  
+
+ 861   3              }
+ 862   2              }
+ 863   1              
+ 864   1              N=0;                                                                                                    //将输入数据计数器清零，为下一次输入作准备
+ 865   1              
+ 866   1              operation=1;
+ 867   1      }
+ 868          
+ 869          
+ 870          //==============================主函数===============================
+ 871          void main(void)
+ 872          {
+ 873   1              unsigned char KEY,NUM;
+ 874   1              unsigned char i,j;
+ 875   1              P1=0xFF;                                   //P1口复位
+ 876   1              TMOD=0x21;                                 //定义工作方式
+ 877   1              TL0=0xB0;
+ 878   1              TH0=0x3C;                                  //定时器赋初值
+ 879   1              EA=1;                                      //打开中断总开关
+ 880   1              ET0=1;                                     //打开中断允许开关
+ 881   1              TR0=0;                                     //打开定时器开关
+ 882   1              TH1=0Xfd;
+ 883   1              TL1=0Xfd;           //9600
+ 884   1              TR1=1;              // 定时器1启动  
+ 885   1              SM0=0;      // 设置串口的工作模式
+ 886   1              SM1=1;      //方式1
+ 887   1              REN=1;           // 允许串口接收数据     
+ 888   1              ES=1;        // 串口中断应许 
+ 889   1              
+ 890   1              Delay400Ms();   //启动等待，等LCM讲入工作状态
+ 891   1              lcd_init();     //LCD初始化
+ 892   1              write_1602com(yi);//日历显示固定符号从第一行第0个位置之后开始显示
+ 893   1              for(i=0;i<16;i++)
+ 894   1              {
+ 895   2                      write_1602dat(name[i]);//向液晶屏写开机画面
+ 896   2              }
+ 897   1              write_1602com(er);
+ 898   1              for(i=0;i<16;i++)
+ 899   1              {
+ 900   2                      write_1602dat(start_line[i]);//写输入密码等待界面
+ 901   2              }
+ 902   1              write_1602com(er+9);    //设置光标位置
+ 903   1              write_1602com(0x0f);    //设置光标为闪烁
+ 904   1              Delay5Ms(); //延时片刻(可不要)
+ 905   1      
+ 906   1              N=0;                                                                                                            //初始化数据输入位数
+ 907   1              RdFromROM(MM,17,1);
+ 908   1              M=MM[0];
+ 909   1                      if(M==0||M>16)
+ 910   1              {
+ 911   2               M=6;
+ 912   2               MM[0]=6;
+ 913   2               WrToROM(MM,17,1);
+ 914   2              }
+ 915   1              while(1)                 //进入循环
+ 916   1              {
+ 917   2                      if(key_disable==1)                                              //锁定键盘标志为1时
+ 918   2                              Alam_KeyUnable();                                       //报警键盘锁
+ 919   2                      else
+ 920   2                              ALAM=1;                                                         //关报警
+ 921   2      
+ 922   2                      KEY=keynum();                                                   //读按键的位置码
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 16  
+
+ 923   2                      if(KEY!=0)                                                              //当有按键按下时
+ 924   2                      {       
+ 925   3                              if(key_disable==1)                                      //锁定键盘标志为1时
+ 926   3                              {
+ 927   4                                      second=0;                                               //秒清零
+ 928   4                              }
+ 929   3                              else                                                            //没有锁定键盘时
+ 930   3                              {
+ 931   4                                      NUM=coding(KEY);                                //根据按键的位置将其编码，编码值赋值给NUM
+ 932   4                                      {
+ 933   5                                              switch(NUM)                                     //判断按键值
+ 934   5                                              {
+ 935   6                                                      case ('A'):     ;                                       break;
+ 936   6                                                      case ('B'):             ;                               break;
+ 937   6                                                      case ('C'): 
+ 938   6                                                                      write_1602com(yi);//日历显示固定符号从第一行第0个位置之后开始显示
+ 939   6                                                                      for(i=0;i<16;i++)
+ 940   6                                                                      {
+ 941   7                                                                              write_1602dat(name[i]);//向液晶屏写开机画面
+ 942   7                                                                      }
+ 943   6                                                             if(N>=1) N--;    OneAlam();                                                              //按键提示音                                            
+ 944   6                                                                      //DisplayOneChar(6+N,1,'*');
+ 945   6                                                                 for(j=N;j<16;j++)
+ 946   6                                                                {
+ 947   7                                                                write_1602com(er+j);
+ 948   7                                                                     write_1602dat(' ');
+ 949   7                                                                }
+ 950   6                                                                for(j=0;j<N;j++)
+ 951   6                                                                {
+ 952   7                                                                              write_1602com(er+j);                            //显示位数随输入增加而增加
+ 953   7                                                                              write_1602dat('*');                                     //但不显示实际数字，用*代替
+ 954   7                                                                      }  
+ 955   6                                                                              InputData[N]=N+4;
+ 956   6                                                                                              break;          //ABC是无定义按键
+ 957   6                                                      case ('D'): ResetPassword();            break;      //重新设置密码
+ 958   6                                                      case ('*'): Cancel();                           break;      //取消当前输入
+ 959   6                                                      case ('#'): Ensure();                           break;          //确认键，
+ 960   6                                                      default:                                                                                //如果不是功能键按下时，就是数字键按下
+ 961   6                                                      {       
+ 962   7                                                              //DisplayListChar(0,1,Input);
+ 963   7                                                              write_1602com(yi);
+ 964   7                                                              for(i=0;i<16;i++)
+ 965   7                                                              {
+ 966   8                                                                      write_1602dat(Input[i]);                                //显示输入画面
+ 967   8                                                              }
+ 968   7                                                          operation=0;                                                                //操作标志清零
+ 969   7                                                              if(N<16)                                                        //当输入的密码少于6位时，接受输入并保存，大于6位时则无效。
+ 970   7                                                              {  
+ 971   8                                                                      OneAlam();                                                              //按键提示音                                            
+ 972   8                                                                      //DisplayOneChar(6+N,1,'*');
+ 973   8                                                                      for(j=0;j<16;j++)
+ 974   8                                                                      {
+ 975   9                                                                          if(j>N)
+ 976   9                                                                              {
+ 977  10                                                                                write_1602com(er+j);
+ 978  10                                                                                write_1602dat(' ');
+ 979  10                                                                              }
+ 980   9                                                                          if(j<=N)
+ 981   9                                                                              {
+ 982  10                                                                              write_1602com(er+j);                            //显示位数随输入增加而增加
+ 983  10                                                                              write_1602dat('*');                                     //但不显示实际数字，用*代替       
+ 984  10                                                                              }
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 17  
+
+ 985   9                                                                      }
+ 986   8                                                                      InputData[N]=NUM;                                               //将数字键的码赋值给InputData[]数组暂存
+ 987   8                                                                      N++;                                                                    //密码位数加
+ 988   8                                                              }
+ 989   7                                                              else                                                                            //输入数据位数大于6后，忽略输入
+ 990   7                                                              {
+ 991   8                                                                      N=16;                                                                   //密码输入大于6位时，不接受输入
+ 992   8                                                                      break;
+ 993   8                                                              }
+ 994   7                                                              write_1602com(er+N);
+ 995   7                                                              if(ReInputEn==1&&ReInputCont==0)
+ 996   7                                                              M=N;
+ 997   7                                                      }
+ 998   6                                              }
+ 999   5                                      }
+1000   4                              }
+1001   3                      } 
+1002   2              }
+1003   1      }
+1004          
+1005          //*********************************中断服务函数**************************************
+1006          void  time0_int(void) interrupt 1                  //定时器T0
+1007          {
+1008   1              TL0=0xB0;
+1009   1              TH0=0x3C;                 //定时器重新赋初值
+1010   1              //TR0=1;
+1011   1              countt0++;                         //计时变量加，加1次时50ms
+1012   1              if(countt0==20)            //加到20次就是1s
+1013   1              {
+1014   2                      countt0=0;                 //变量清零
+1015   2                      second++;                  //秒加
+1016   2                      if(pass==1)                //开锁状态时
+1017   2                      {
+1018   3                              if(second==1)                   //秒加到1s时
+1019   3                              {
+1020   4                               
+1021   4                                      TR0=0;                          //关定时器
+1022   4                                      TL0=0xB0;
+1023   4                                      TH0=0x3C;                       //再次赋初值
+1024   4                                      second=0;                       //秒清零
+1025   4                              }
+1026   3                      }
+1027   2                      else                                            //不在开锁状态时
+1028   2                      {
+1029   3                              if(second==3)                   //秒加到3时
+1030   3                              {
+1031   4                                      TR0=0;                          //关闭定时器
+1032   4                                      second=0;                       //秒清零
+1033   4                                      key_disable=0;          //锁定键盘清零
+1034   4                                      s3_keydown=0;   
+1035   4                                      TL0=0xB0;
+1036   4                                      TH0=0x3C;                       //重新赋初值
+1037   4                              }
+1038   3                              else
+1039   3                                  TR0=1;                              //打开定时器
+1040   3                      }
+1041   2                              
+1042   2              }
+1043   1      }
+1044          
+1045          //  通讯中断接收程序   中断函数无返回值
+1046            void uart_rx(void)  interrupt 4       using 3   //放在这里 和放在main（）里面是一样的
+C51 COMPILER V9.00   胈_胨_                                                                04/05/2021 20:14:15 PAGE 18  
+
+1047           {
+1048   1      
+1049   1              unsigned char i;
+1050   1              unsigned char flag;
+1051   1              unsigned char dat;
+1052   1          if(RI)                       //是否接收中断
+1053   1          {
+1054   2             RI=0;
+1055   2             dat=SBUF;
+1056   2             if(dat=='O'&&(i==0)) //接收数据第一帧
+1057   2             {
+1058   3                  buff[i]=dat;
+1059   3                  flag=1;        //开始接收数据
+1060   3             }
+1061   2             else
+1062   2                    if(flag==1)
+1063   2                    {
+1064   3                            i++;
+1065   3                            buff[i]=dat;
+1066   3                            if(i>=2)
+1067   3                        {
+1068   4                                 i=0;
+1069   4                                 flag=0;
+1070   4                                 flag_REC=1 ;
+1071   4                            }  // 停止接收
+1072   3                    }
+1073   2               }
+1074   1      
+1075   1       }
+1076          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   2578    ----
+   CONSTANT SIZE    =    224    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     63      29
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      6    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
